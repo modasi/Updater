@@ -1,0 +1,25 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "go",
+			"label": "go: build package",
+			"command": "build",
+			"args": [
+				"-ldflags",
+				"-s -w -H=windowsgui",
+				"-o",
+				"${workspaceFolder}/bin/update.exe",
+				"${workspaceFolder}/autoupdate/cmd/main.go"
+			],
+			"problemMatcher": [
+				"$go"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "cd d:\\works\\update; go build ${fileDirname}"
+		}
+	]
+}
