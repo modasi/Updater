@@ -2,7 +2,6 @@ package updater
 
 import (
 	"archive/zip"
-	"bufio"
 	"context"
 	"crypto/md5"
 	"crypto/tls"
@@ -17,16 +16,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"gopkg.in/ini.v1"
 )
 
 const (
-	VersionFile        = "ver.ini"
+	VersionFile = "ver.ini"
+
 	GithubReleaseURL   = "https://github.com/%s/%s/%s/%s"
-	GithubVersionURL   = "https://raw.githubusercontent.com/%s/%s/main/ver.ini"
+	GithubVersionURL   = "https://raw.githubusercontent.com/%s/%s/main/" + VersionFile
 	ExitCodeNoUpdate   = 0
 	ExitCodeNewVersion = 1
 	ExitCodeError      = -1
@@ -36,11 +35,10 @@ const (
 )
 
 type Updater struct {
-	CurrentVersion string
+	Current        VersionInfo
 	Owner          string
 	Repo           string
 	ExecutableName string
-	IgnoredVersion string
 	debugMode      bool
 }
 
@@ -52,22 +50,33 @@ type VersionInfo struct {
 }
 
 func NewUpdater(owner, repo string, debug bool) *Updater {
-	execName := filepath.Base(os.Args[0])
+
+	exepath, _ := os.Executable()
+	execName := filepath.Base(exepath)
 
 	u := &Updater{
-		CurrentVersion: "1.0.0",
+		Current:        VersionInfo{},
 		Owner:          owner,
 		Repo:           repo,
 		ExecutableName: execName,
 		debugMode:      debug,
 	}
+	// 设置VersionFile为当前目录下VersionFile的绝对路径
+	var VersionFilePath string
+	execDir, err := filepath.Abs(filepath.Dir(exepath))
+	if err != nil {
+		log.Printf("获取可执行文件目录失败: %v\n", err)
+		VersionFilePath = VersionFile
+	} else {
+		VersionFilePath = filepath.Join(execDir, VersionFile)
+	}
 
-	currentVersion, err := ReadVersionFile(VersionFile)
+	vi, err := ReadVersionFile(VersionFilePath)
 	if err != nil {
 		log.Printf("读取版本文件失败: %v\n", err)
 	} else {
-		u.CurrentVersion = currentVersion
-		fmt.Printf("当前版本: %s\n", currentVersion)
+		u.Current = vi
+		log.Printf("当前版本: %s\n", vi.Version)
 	}
 
 	return u
@@ -75,64 +84,89 @@ func NewUpdater(owner, repo string, debug bool) *Updater {
 
 func (u *Updater) Update() int {
 
-	versionInfo, err := u.checkLatestVersion()
+	vi, content, err := u.checkLatestVersion()
 	if err != nil {
 		log.Printf("检查更新时发生错误: %v", err)
 		return ExitCodeError
 	}
 
-	if versionInfo.Version == u.CurrentVersion || versionInfo.Version == u.IgnoredVersion {
+	if vi.Version == u.Current.Version {
+		log.Printf("没有新版本")
 		return ExitCodeNoUpdate
 	}
 
-	message := fmt.Sprintf("发现新版本: %s\n当前版本: %s\n是否更新?", versionInfo.Version, u.CurrentVersion)
-	if ShowUpdateConfirmDialog(message) {
-		progressChan := make(chan float64)
-		doneChan := make(chan bool)
+	progressChan := make(chan float64)
+	doneChan := make(chan bool)
+	success := false
 
-		// 在后台执行下载和更新
-		go func() {
-			err = u.downloadAndUpdate(versionInfo, progressChan)
-			if err != nil {
-				ShowUpdateErrorDialog(err.Error())
-				os.Exit(ExitCodeError)
-			}
-			close(progressChan)
-			doneChan <- (err == nil)
-
-		}()
-
-		// 更新进度条
+	// 更新进度条
+	cb1 := func() {
 		go func() {
 			for progress := range progressChan {
 				SetUpdateProgress(progress)
 			}
 		}()
+	}
 
-		// 显示更新进度窗口
-		ShowWindow(progressChan)
+	// 更新完成
+	cb2 := func() {
+		go func() {
+			success = <-doneChan
+			if !success {
+				ShowUpdateErrorDialog(err.Error())
+				os.Exit(ExitCodeError)
+			}
 
-		// 等待下载和更新完成
-		success := <-doneChan
+			// 关闭更新进度窗口
+			CloseWindow()
 
-		// 关闭更新进度窗口
-		CloseWindow()
+		}()
+	}
 
-		if !success {
-			ShowUpdateErrorDialog(err.Error())
-			return ExitCodeError
-		}
+	// 在后台执行下载和更新
+	cb3 := func() {
+		go func() {
+			err = u.downloadAndUpdate(vi, content, progressChan)
+			if err != nil {
+				ShowUpdateErrorDialog(err.Error())
+				os.Exit(ExitCodeError)
+			} else {
+				close(progressChan)
+				doneChan <- (err == nil)
 
-		return ExitCodeNewVersion
+			}
+
+		}()
+	}
+
+	message := fmt.Sprintf("发现新版本: %s\n当前版本: %s\n是否更新?", vi.Version, u.Current.Version)
+	if ShowUpdateConfirmDialog(message) {
+
+		// 显示更新窗口
+		ShowWindow(progressChan, cb1, cb2, cb3)
+
 	} else {
 		return ExitCodeNoUpdate
 	}
+
+	if !success {
+		if err != nil {
+			ShowUpdateErrorDialog(err.Error())
+		}
+		return ExitCodeError
+	}
+
+	return ExitCodeNewVersion
+
 }
 
-func (u *Updater) checkLatestVersion() (*VersionInfo, error) {
-	log.Printf("检查最新版本")
-	var versionInfo VersionInfo
+func (u *Updater) checkLatestVersion() (VersionInfo, []byte, error) {
+	log.Printf("检查最新版本...")
+
+	var vi VersionInfo
+	var content []byte
 	var err error
+
 	for i := 0; i < 3; i++ {
 		client := u.getHTTPClient()
 
@@ -146,46 +180,42 @@ func (u *Updater) checkLatestVersion() (*VersionInfo, error) {
 		}
 		defer resp.Body.Close()
 
-		scanner := bufio.NewScanner(resp.Body)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-			switch key {
-			case "version":
-				versionInfo.Version = value
-			case "filename":
-				versionInfo.Filename = value
-			case "md5":
-				versionInfo.MD5 = value
-			case "fullpackage":
-				versionInfo.FullPackageURL = value
-			}
+		content, err = io.ReadAll(resp.Body)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
 		}
 
-		if versionInfo.Version == "" || versionInfo.Filename == "" || versionInfo.MD5 == "" || versionInfo.FullPackageURL == "" {
-			return nil, fmt.Errorf("无效的版本文件格式")
+		cfg, err := ini.Load(content)
+		if err != nil {
+			return vi, content, fmt.Errorf("无法解析版本信息: %v", err)
 		}
-		return &versionInfo, nil
+
+		vi.Version = cfg.Section("").Key("version").String()
+		vi.Filename = cfg.Section("").Key("filename").String()
+		vi.MD5 = cfg.Section("").Key("md5").String()
+		vi.FullPackageURL = cfg.Section("").Key("fullpackage").String()
+
+		if vi.Version == "" || vi.Filename == "" || vi.MD5 == "" || vi.FullPackageURL == "" {
+			return vi, content, fmt.Errorf("无效的版本文件格式")
+		}
+
+		return vi, content, nil
 	}
 
-	return nil, fmt.Errorf("检查更新失败 %v", err)
+	return vi, content, fmt.Errorf("检查更新失败 %v", err)
 }
 
-func (u *Updater) downloadAndUpdate(versionInfo *VersionInfo, progressChan chan<- float64) error {
+func (u *Updater) downloadAndUpdate(vi VersionInfo, versionFileContent []byte, progressChan chan<- float64) error {
 	// 构建下载 URL
-	url := fmt.Sprintf(GithubReleaseURL, u.Owner, u.Repo, versionInfo.Version, versionInfo.Filename)
+	url := fmt.Sprintf(GithubReleaseURL, u.Owner, u.Repo, vi.Version, vi.Filename)
 
 	// 在当前目录下创建 tmp 目录
 	tempDir := "tmp"
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return fmt.Errorf("创建临时目录失败: %v", err)
 	}
-	tempFilePath := filepath.Join(tempDir, versionInfo.Filename)
+	tempFilePath := filepath.Join(tempDir, vi.Filename)
 
 	// 下载文件
 	err := u.downloadWithResume(url, tempFilePath, progressChan)
@@ -198,26 +228,20 @@ func (u *Updater) downloadAndUpdate(versionInfo *VersionInfo, progressChan chan<
 	if err != nil {
 		return fmt.Errorf("计算下载文件 MD5 失败: %v", err)
 	}
-	if downloadedMD5 != versionInfo.MD5 {
+	if downloadedMD5 != vi.MD5 {
 		os.Remove(tempFilePath)
 		return fmt.Errorf("MD5 校验失败")
 	}
 
-	// 解压并替换可执行文件
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("获取当前可执行文件路径失败: %v", err)
-	}
-
-	err = u.extractAndReplace(tempFilePath, execPath)
+	err = u.extractAndReplace(tempFilePath)
 	if err != nil {
 		return fmt.Errorf("更新失败: %v", err)
 	}
 
 	progressChan <- 1.0 // 100% 进度
 
-	// 更新版本文件
-	err = ioutil.WriteFile(VersionFile, []byte(versionInfo.Version), 0644)
+	err = ioutil.WriteFile(VersionFile, versionFileContent, 0644)
+
 	if err != nil {
 		return fmt.Errorf("更新版本文件失败: %v", err)
 	}
@@ -226,6 +250,105 @@ func (u *Updater) downloadAndUpdate(versionInfo *VersionInfo, progressChan chan<
 }
 
 func (u *Updater) downloadWithResume(url string, filePath string, progressChan chan<- float64) error {
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	downloadedSize := fileInfo.Size()
+	totalSize := int64(0)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	if downloadedSize > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", downloadedSize))
+	}
+
+	client := u.getHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// 服务器不支持断点续传，清空文件并重新下载
+		if err := file.Truncate(0); err != nil {
+			return fmt.Errorf("清空文件失败: %v", err)
+		}
+		if _, err := file.Seek(0, 0); err != nil {
+			return fmt.Errorf("重置文件指针失败: %v", err)
+		}
+		totalSize = resp.ContentLength
+		downloadedSize = 0
+	case http.StatusPartialContent:
+		totalSize = resp.ContentLength + downloadedSize
+		if _, err := file.Seek(downloadedSize, 0); err != nil {
+			return fmt.Errorf("设置文件指针失败: %v", err)
+		}
+
+		if totalSize == downloadedSize {
+			progressChan <- 0.9
+			return nil
+		}
+
+	default:
+		return fmt.Errorf("服务器返回非预期状态码: %d", resp.StatusCode)
+	}
+
+	if totalSize <= 0 {
+		return fmt.Errorf("无法获取文件大小")
+	}
+
+	var buffer []byte
+	if u.debugMode {
+		buffer = make([]byte, 1)
+	} else {
+		buffer = make([]byte, 32*1024)
+	}
+	for {
+		if IsUpdateCancelled() {
+			return fmt.Errorf("下载被用户取消")
+		}
+		if u.debugMode {
+			time.Sleep(100 * time.Millisecond)
+		}
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			_, writeErr := file.Write(buffer[:n])
+			if writeErr != nil {
+				return writeErr
+			}
+			downloadedSize += int64(n)
+			progress := float64(downloadedSize) / float64(totalSize)
+			if progress > 0.9 {
+				progress = 0.9
+			} else if progress < 0 {
+				progress = 0
+			}
+			progressChan <- progress
+		}
+
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (u *Updater) downloadWithResume2(url string, filePath string, progressChan chan<- float64) error {
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
@@ -264,6 +387,10 @@ func (u *Updater) downloadWithResume(url string, filePath string, progressChan c
 		downloadedSize = 0
 	} else if resp.StatusCode == http.StatusPartialContent {
 		totalSize = resp.ContentLength + downloadedSize
+		if totalSize == downloadedSize {
+			progressChan <- 0.9
+			return nil
+		}
 	} else {
 		return fmt.Errorf("服务器返回非预期状态码: %d", resp.StatusCode)
 	}
@@ -293,8 +420,8 @@ func (u *Updater) downloadWithResume(url string, filePath string, progressChan c
 			}
 			downloadedSize += int64(n)
 			progress := float64(downloadedSize) / float64(totalSize)
-			if progress > 1.0 {
-				progress = 1.0
+			if progress > 0.9 {
+				progress = 0.9
 			} else if progress < 0 {
 				progress = 0
 			}
@@ -312,45 +439,52 @@ func (u *Updater) downloadWithResume(url string, filePath string, progressChan c
 	return nil
 }
 
-func (u *Updater) extractAndReplace(zipPath, execPath string) error {
+func (u *Updater) extractAndReplace(zipPath string) error {
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("打开 ZIP 文件失败: %v", err)
 	}
 	defer reader.Close()
 
-	targetName := fmt.Sprintf("%s_%s_%s", u.ExecutableName, runtime.GOOS, runtime.GOARCH)
+	// 获取当前可执行文件的目录
+	execDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("获取当前目录失败: %v", err)
+	}
 
 	for _, file := range reader.File {
-		if file.Name == targetName {
-			rc, err := file.Open()
-			if err != nil {
-				return err
-			}
-			defer rc.Close()
+		filePath := filepath.Join(execDir, file.Name)
 
-			tempExec, err := ioutil.TempFile("", "exec_*")
-			if err != nil {
-				return err
-			}
-			defer os.Remove(tempExec.Name())
+		if file.FileInfo().IsDir() {
+			os.MkdirAll(filePath, os.ModePerm)
+			continue
+		}
 
-			_, err = io.Copy(tempExec, rc)
-			if err != nil {
-				return err
-			}
-			tempExec.Close()
+		if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+			return fmt.Errorf("创建目录失败: %v", err)
+		}
 
-			err = os.Chmod(tempExec.Name(), 0755)
-			if err != nil {
-				return err
-			}
+		dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
+		if err != nil {
+			return fmt.Errorf("创建文件失败: %v", err)
+		}
 
-			return u.replaceExecutable(tempExec.Name(), execPath)
+		srcFile, err := file.Open()
+		if err != nil {
+			dstFile.Close()
+			return fmt.Errorf("打开 ZIP 文件内容失败: %v", err)
+		}
+
+		_, err = io.Copy(dstFile, srcFile)
+		srcFile.Close()
+		dstFile.Close()
+
+		if err != nil {
+			return fmt.Errorf("复制文件内容失败: %v", err)
 		}
 	}
 
-	return fmt.Errorf("未找到适合当前系统的更新文件")
+	return nil
 }
 
 func (u *Updater) replaceExecutable(tempPath, execPath string) error {
@@ -384,10 +518,6 @@ func (u *Updater) handleManualUpdate(versionInfo *VersionInfo) int {
 		return ExitCodeNewVersion
 	}
 
-	ignore := ShowUpdateConfirmDialog("是否忽略此版本?")
-	if ignore {
-		u.IgnoredVersion = versionInfo.Version
-	}
 	return ExitCodeError
 }
 
@@ -425,25 +555,33 @@ func calculateMD5(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func ReadVersionFile(filePath string) (string, error) {
-	content, err := ioutil.ReadFile(filePath)
+func ReadVersionFile(filePath string) (vi VersionInfo, err error) {
+	var content []byte
+	content, err = ioutil.ReadFile(filePath)
 	if err != nil {
-		return "", fmt.Errorf("无法读取版本文件: %v", err)
+		return vi, fmt.Errorf("无法读取版本文件: %v", err)
 	}
 
-	// 将内容转换为INI格式
-	iniContent := fmt.Sprintf("[version]\n%s", string(content))
-	cfg, err := ini.Load([]byte(iniContent))
+	cfg, err := ini.Load(content)
 	if err != nil {
-		return "", fmt.Errorf("无法解析版本信息: %v", err)
+		return vi, fmt.Errorf("无法解析版本信息: %v", err)
 	}
 
-	version := cfg.Section("version").Key("ver").String()
+	vi.Version = cfg.Section("").Key("version").String()
+	vi.Filename = cfg.Section("").Key("filename").String()
+	vi.MD5 = cfg.Section("").Key("md5").String()
+	vi.FullPackageURL = cfg.Section("").Key("fullpackage").String()
+
+	if vi.Version == "" || vi.Filename == "" || vi.MD5 == "" || vi.FullPackageURL == "" {
+		return vi, fmt.Errorf("配置文件缺少必要的信息")
+	}
+
+	version := cfg.Section("").Key("version").String()
 	if version == "" {
-		return "", fmt.Errorf("版本信息不存在")
+		return vi, fmt.Errorf("版本信息不存在")
 	}
 
-	return strings.TrimSpace(version), nil
+	return
 }
 
 func (u *Updater) getHTTPClient() *http.Client {

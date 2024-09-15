@@ -8,10 +8,15 @@
             "name": "Launch Package",
             "type": "go",
             "request": "launch",
-            "mode": "auto",
-            "program": "autoupdate/cmd/main.go",
+            "mode":"auto",
+            "program": "${workspaceFolder}/autoupdate/cmd/main.go",
             "cwd": "${workspaceFolder}/bin",
-            "args": ["-debug"]
+            "args": ["-debug"],
+            "output": "${workspaceFolder}/bin/update"
+
+            
         }
-    ]
+        
+    ],
+    
 }

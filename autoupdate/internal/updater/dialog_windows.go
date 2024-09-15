@@ -5,7 +5,6 @@ package updater
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 	"unsafe"
 )
@@ -219,21 +218,20 @@ func HIWORD(w uintptr) uint16 {
 }
 
 func defWindowProc(hwnd syscall.Handle, msg uint32, wparam, lparam uintptr) uintptr {
-
 	switch msg {
-	case WM_CLOSE, WM_QUIT, WM_DESTROY:
-		os.Exit(0)
-		return 0
 	case WM_COMMAND:
 		if LOWORD(wparam) == IDCANCEL && HIWORD(wparam) == BN_CLICKED {
-			procSendMessageW.Call(
-				uintptr(hwnd),
-				WM_CLOSE,
-				0,
-				0,
-			)
+			// 用户点击了取消按钮
+			SetUpdateCancelled(true)
+			procPostQuitMessage.Call(0)
 			return 0
 		}
+	case WM_CLOSE:
+		procDestroyWindow.Call(uintptr(hwnd))
+		return 0
+	case WM_DESTROY:
+		procPostQuitMessage.Call(0)
+		return 0
 	}
 
 	ret, _, _ := procDefWindowProcW.Call(
@@ -242,6 +240,7 @@ func defWindowProc(hwnd syscall.Handle, msg uint32, wparam, lparam uintptr) uint
 		wparam,
 		lparam,
 	)
+
 	return ret
 
 }
@@ -264,10 +263,10 @@ func (pw *ProgressWindow) Hide() {
 }
 
 func (pw *ProgressWindow) Close() {
-	procDestroyWindow.Call(uintptr(pw.hwnd))
+	procSendMessageW.Call(uintptr(pw.hwnd), WM_CLOSE, 0, 0)
 }
 
-func ShowWindow(progressChan <-chan float64) {
+func ShowWindow(progressChan <-chan float64, cb1 func(), cb2 func(), cb3 func()) {
 	if currentProgressWindow == nil {
 		var err error
 		currentProgressWindow, err = NewProgressWindow()
@@ -277,8 +276,14 @@ func ShowWindow(progressChan <-chan float64) {
 		}
 	}
 	currentProgressWindow.Show()
+
+	cb1()
+	cb2()
+	cb3()
+
 	var msg MSG
 	for {
+
 		ret, _, _ := procGetMessageW.Call(
 			uintptr(unsafe.Pointer(&msg)),
 			0,
@@ -292,6 +297,7 @@ func ShowWindow(progressChan <-chan float64) {
 
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
+
 	}
 }
 
@@ -303,11 +309,7 @@ func SetUpdateProgress(progress float64) {
 
 func CloseWindow() {
 	if currentProgressWindow != nil {
-		currentProgressWindow.Hide()
 		currentProgressWindow.Close()
-		currentProgressWindow = nil
-		// 发送退出消息以结束消息循环
-		procPostQuitMessage.Call(0)
 	}
 }
 

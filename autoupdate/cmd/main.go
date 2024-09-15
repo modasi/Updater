@@ -21,9 +21,5 @@ func main() {
 	}
 
 	updater := updater.NewUpdater("yourusername", "yourrepo", *debug)
-
-	// 执行更新操作
-	result := updater.Update()
-
-	os.Exit(result)
+	os.Exit(updater.Update())
 }

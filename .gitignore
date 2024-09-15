@@ -7,6 +7,11 @@
 *.zip
 *.a
 *.o
+*.syso
+
+
+/tmp/
+/bin/
 
 
 # Test binary, built with `go test -c`

@@ -3,11 +3,11 @@
 	"tasks": [
 		{
 			"type": "go",
-			"label": "go: build package",
+			"label": "go: build windows package",
 			"command": "build",
 			"args": [
 				"-ldflags",
-				"-s -w -H=windowsgui",
+				"-s -w -H windowsgui",
 				"-o",
 				"${workspaceFolder}/bin/update.exe",
 				"${workspaceFolder}/autoupdate/cmd/main.go"
