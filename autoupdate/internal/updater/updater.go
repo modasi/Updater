@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/ini.v1"
@@ -23,19 +24,22 @@ import (
 const (
 	VersionFile = "ver.ini"
 
-	GithubReleaseURL   = "https://github.com/yourusername/yourrepo/%s/%s"
-	GithubVersionURL   = "https://raw.githubusercontent.com/yourusername/yourrepo/main/" + VersionFile
+	ReleaseURL = "https://github.com/yourusername/yourrepo/%s/%s"
+	VersionURL = "https://raw.githubusercontent.com/yourusername/yourrepo/main/" + VersionFile
+	ProxyURL   = "https://ghp.ci"
+
 	ExitCodeNoUpdate   = 0
 	ExitCodeNewVersion = 1
 	ExitCodeCancel     = 2
 	ExitCodeError      = -1
-	RetryLimit         = 3
+	RetryLimit         = 4
 	ChunkSize          = 1024 * 1024 // 1MB
 
 )
 
 var (
-	AppName string
+	AppName      string
+	IsSilentMode = false
 )
 
 type Updater struct {
@@ -44,9 +48,11 @@ type Updater struct {
 	ExecutableName string
 	debugMode      bool
 
-	progressChan chan float64
-	doneChan     chan bool
-	success      bool
+	// progressChan chan float64
+	doneChan chan bool
+	success  bool
+
+	Progress uint64
 }
 
 type VersionInfo struct {
@@ -56,10 +62,6 @@ type VersionInfo struct {
 	FullPackageURL string
 	RawData        []byte
 }
-
-var (
-	IsSilentMode = false
-)
 
 func NewUpdater(appName string, debug bool, silent bool) *Updater {
 
@@ -73,9 +75,10 @@ func NewUpdater(appName string, debug bool, silent bool) *Updater {
 		CurrentVer:     VersionInfo{},
 		ExecutableName: execName,
 		debugMode:      debug,
-		progressChan:   make(chan float64),
-		doneChan:       make(chan bool),
-		success:        false,
+		// progressChan:   make(chan float64),
+		doneChan: make(chan bool),
+		success:  false,
+		Progress: 0,
 	}
 	// 设置VersionFile为当前目录下VersionFile的绝对路径
 	var VersionFilePath string
@@ -99,9 +102,24 @@ func NewUpdater(appName string, debug bool, silent bool) *Updater {
 }
 
 func (u *Updater) syncUI() {
+	// go func() {
+	// 	for progress := range u.progressChan {
+	// 		SetUpdateProgress(progress)
+	// 	}
+	// }()
+
 	go func() {
-		for progress := range u.progressChan {
-			SetUpdateProgress(progress)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				progress := u.GetProgress()
+				SetUpdateProgress(progress)
+			case <-u.doneChan:
+				return
+			}
 		}
 	}()
 }
@@ -112,7 +130,7 @@ func (u *Updater) bgTask() {
 	if err != nil {
 		ShowUpdateErrorDialog(err.Error())
 	}
-	close(u.progressChan)
+	// close(u.progressChan)
 }
 
 func (u *Updater) Update() int {
@@ -134,7 +152,6 @@ func (u *Updater) Update() int {
 	}
 
 	if !IsSilentMode {
-		ShowMainWindow()
 		if !ShowUpdateConfirmDialog(fmt.Sprintf("发现新版本: %s,是否更新?", u.NewVer.Version)) {
 			AppendLogText("更新被用户取消")
 			CloseWindow()
@@ -167,22 +184,29 @@ func (u *Updater) checkLatestVersion() (VersionInfo, error) {
 	var vi VersionInfo
 	var err error
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < RetryLimit; i++ {
 		client := u.getHTTPClient()
+		var url string
+
+		url = VersionURL
+		if i > 2 {
+			url = fmt.Sprintf("%s/%s", ProxyURL, VersionURL)
+		} else {
+			url = VersionURL
+		}
 
 		var resp *http.Response
 
-		url := GithubVersionURL
 		resp, err = client.Get(url)
 		if err != nil {
-			time.Sleep(time.Second * 2)
+			time.Sleep(time.Second)
 			continue
 		}
 		defer resp.Body.Close()
 
 		vi.RawData, err = io.ReadAll(resp.Body)
 		if err != nil {
-			time.Sleep(time.Second * 2)
+			time.Sleep(time.Second)
 			continue
 		}
 
@@ -208,7 +232,7 @@ func (u *Updater) checkLatestVersion() (VersionInfo, error) {
 
 func (u *Updater) downloadAndUpdate() error {
 	// 构建下载 URL
-	url := fmt.Sprintf(GithubReleaseURL, u.NewVer.Version, u.NewVer.Filename)
+	url := fmt.Sprintf(ReleaseURL, u.NewVer.Version, u.NewVer.Filename)
 
 	// 在当前目录下创建 tmp 目录
 	tempDir := "tmp"
@@ -235,7 +259,7 @@ func (u *Updater) downloadAndUpdate() error {
 		return fmt.Errorf("更新失败: %v", err)
 	}
 
-	u.progressChan <- 1.0 // 100% 进度
+	SetUpdateProgress(1.0)
 
 	err = ioutil.WriteFile(VersionFile, u.NewVer.RawData, 0644)
 
@@ -293,7 +317,7 @@ func (u *Updater) downloadWithResume(url string, filePath string) error {
 		}
 
 		if totalSize == downloadedSize {
-			u.progressChan <- 0.9
+			u.SetProgress(0.9)
 			return nil
 		}
 
@@ -331,7 +355,9 @@ func (u *Updater) downloadWithResume(url string, filePath string) error {
 			} else if progress < 0 {
 				progress = 0
 			}
-			u.progressChan <- progress
+
+			u.SetProgress(progress)
+
 		}
 
 		if err != nil {
@@ -484,6 +510,19 @@ func (u *Updater) extractAndReplace(zipPath string) error {
 	return nil
 }
 
+// SetProgress 设置更新进度
+func (u *Updater) SetProgress(value float64) {
+	// 将浮点数转换为整数（0-100）
+	atomic.StoreUint64(&u.Progress, uint64(value*100))
+
+}
+
+// GetProgress 获取当前更新进度
+func (u *Updater) GetProgress() float64 {
+	intValue := atomic.LoadUint64(&u.Progress)
+	return float64(intValue) / 100
+}
+
 func (u *Updater) replaceExecutable(tempPath, execPath string) error {
 	switch runtime.GOOS {
 	case "windows":
@@ -589,17 +628,26 @@ func (u *Updater) getHTTPClient() *http.Client {
 
 	if u.debugMode {
 		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			d := net.Dialer{}
+			d := net.Dialer{
+				Timeout: time.Second * 2,
+			}
 			return d.DialContext(ctx, "tcp", "127.0.0.1:9808")
 		}
 		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			d := net.Dialer{}
+			d := net.Dialer{
+				Timeout: time.Second * 2,
+			}
 			return d.DialContext(ctx, "tcp", "127.0.0.1:9808")
 		}
 	}
 
 	return &http.Client{
 		Transport: transport,
-		Timeout:   time.Second * 30,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("太多重定向")
+			}
+			return nil
+		},
 	}
 }
