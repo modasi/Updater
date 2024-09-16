@@ -45,12 +45,12 @@ func NewMainWindow() (*ProgressWindow, error) {
 	screenWidth := w32.GetSystemMetrics(w32.SM_CXSCREEN)
 	screenHeight := w32.GetSystemMetrics(w32.SM_CYSCREEN)
 
-	var ws uint
-	if IsSilentMode {
-		ws = w32.WS_CHILD | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
-	} else {
-		ws = w32.WS_CHILD | w32.WS_VISIBLE | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
-	}
+	// var ws uint
+	// if IsSilentMode {
+	// 	ws = w32.WS_CHILD | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
+	// } else {
+	// 	ws = w32.WS_CHILD | w32.WS_VISIBLE | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
+	// }
 
 	x := (screenWidth - WindowWidth) / 2
 	y := (screenHeight - WindowHeight) / 2
@@ -71,7 +71,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 		0,
 		className,
 		windowName,
-		w32.WS_OVERLAPPED|w32.WS_CAPTION|w32.WS_SYSMENU,
+		w32.WS_OVERLAPPEDWINDOW,
 		int(x), int(y), WindowWidth, WindowHeight,
 		0, 0, wcx.Instance, nil)
 
@@ -91,7 +91,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 		w32.WS_EX_CLIENTEDGE,
 		syscall.StringToUTF16Ptr("EDIT"),
 		nil,
-		ws|w32.ES_READONLY|w32.ES_MULTILINE|w32.ES_AUTOVSCROLL|w32.WS_VSCROLL,
+		w32.WS_CHILD|w32.WS_VISIBLE|w32.WS_VSCROLL|w32.ES_MULTILINE|w32.ES_AUTOVSCROLL|w32.ES_READONLY,
 		12, 50, 440, 180,
 		hwnd, 0, wcx.Instance, nil)
 
@@ -101,7 +101,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 		0,
 		syscall.StringToUTF16Ptr("BUTTON"),
 		syscall.StringToUTF16Ptr("取消"),
-		w32.WS_CHILD|w32.WS_VISIBLE|w32.BS_DEFPUSHBUTTON,
+		w32.WS_CHILD|w32.WS_VISIBLE|w32.BS_PUSHBUTTON,
 		352, 240, 100, 25,
 		hwnd, w32.HMENU(w32.IDCANCEL), wcx.Instance, nil)
 

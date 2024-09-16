@@ -4,75 +4,125 @@
 package updater
 
 import (
-	"log"
-	"os"
+	"sync/atomic"
+
+	"github.com/mojbro/gocoa"
+	"github.com/sqweek/dialog"
 )
 
 var (
-	isUpdateCancelled bool
-	isSilentMode      bool
+	isUpdateCancelled uint32
+	MainWindow        *ProgressWindow
+	cancelButton      gocoa.Button
 )
 
-func init() {
-	for _, arg := range os.Args {
-		if arg == "-q" {
-			isSilentMode = true
-			break
-		}
-	}
+const (
+	WindowWidth  = 480
+	WindowHeight = 320
+)
+
+type ProgressWindow struct {
+	window      *gocoa.Window
+	progressBar *gocoa.ProgressIndicator
+	logTextView *gocoa.TextView
 }
 
-func AppLoop() {
+func init() {
+	gocoa.InitApplication()
+}
 
+func NewMainWindow() (*ProgressWindow, error) {
+
+	wnd := gocoa.NewCenteredWindow(AppName, WindowWidth, WindowHeight)
+
+	progressBar := gocoa.NewProgressIndicator(12, 20, 440, 24)
+	logTextView := gocoa.NewTextView(12, 100, 440, 180)
+	cancelButton := gocoa.NewButton(300, 300, 100, 25)
+	cancelButton.SetTitle("取消")
+
+	wnd.AddProgressIndicator(progressBar)
+	wnd.AddTextView(logTextView)
+	wnd.AddButton(cancelButton)
+
+	cancelButton.OnClick(func() {
+		atomic.StoreUint32(&isUpdateCancelled, 1)
+		gocoa.TerminateApplication()
+	})
+
+	return &ProgressWindow{
+		window:      wnd,
+		progressBar: progressBar,
+		logTextView: logTextView,
+	}, nil
 }
 
 func ShowMainWindow() {
-
-}
-
-func SetUpdateComplete() {
-
-}
-
-func UpdateUI(cb1 func(), cb2 func(), cb3 func()) {
-
-	cb1()
-	cb2()
-	cb3()
+	if MainWindow == nil {
+		var err error
+		MainWindow, err = NewMainWindow()
+		if err != nil {
+			return
+		}
+	}
+	MainWindow.window.MakeKeyAndOrderFront()
 }
 
 func SetUpdateProgress(progress float64) {
-	if !isSilentMode {
-		log.Printf("更新进度: %.2f%%", progress*100)
+	if MainWindow != nil {
+		MainWindow.progressBar.SetValue(progress)
 	}
 }
 
+var logText string
+
 func AppendLogText(text string) {
-	if !isSilentMode {
-		log.Print(text)
+	logText += text + "\n"
+	if MainWindow != nil {
+		MainWindow.logTextView.SetText(logText)
 	}
 }
 
 func CloseWindow() {
-	// 在 macOS 上不需要实现
+	gocoa.TerminateApplication()
+}
+
+func SetUpdateComplete() {
+	if MainWindow != nil {
+		cancelButton.SetTitle("完成")
+	}
 }
 
 func ShowUpdateErrorDialog(message string) {
-	if isSilentMode {
-		log.Printf("更新错误: %s", message)
-	} else {
-		log.Printf("更新错误对话框: %s", message)
-	}
+	AppendLogText("更新错误: " + message)
+	ShowMessageBox(AppName, message, 1)
 }
 
 func ShowUpdateConfirmDialog(message string) bool {
-	if isSilentMode {
-		return true
+
+	return ShowMessageBox(AppName, message, 2) != 0
+}
+
+func ShowMessageBox(title, message string, uType uint) int32 {
+	switch uType {
+	case 1:
+		dialog.Message("%s", message).Title(AppName).Error()
+	case 2:
+		if dialog.Message("%s", message).Title(AppName).YesNo() {
+			return 1
+		} else {
+			return 0 // IDNO
+		}
+	default:
+		dialog.Message("%s", message).Title(AppName).Info()
 	}
-	log.Printf("更新确认对话框: %s", message)
-	return true // 在实际应用中，您可能需要实现一个真正的对话框
+
+	return 0
 }
 
 func IsUpdateCancelled() bool {
-	return isUpdateCancelled
+	return atomic.LoadUint32(&isUpdateCancelled) != 0
+}
+
+func AppLoop() {
+	gocoa.RunApplication()
 }
