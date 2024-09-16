@@ -6,7 +6,7 @@ This is an application with auto-update functionality.
 
 - Automatic update checking
 - Download and installation of new versions
-- Multi-platform support (including Darwin/macOS/Linux-GTK/Linux-Cli)
+- Multi-platform support (including Windows/MacOS/Linux-GTK/Linux-Cli)
 - Supports running in GUI/command-line/silent mode
 
 ## Usage
@@ -17,8 +17,7 @@ This is an application with auto-update functionality.
 
 ### Prerequisites
 
-- Go 1.x
-- (List other dependencies)
+- Go 1.16+
 
 ### Building
 
