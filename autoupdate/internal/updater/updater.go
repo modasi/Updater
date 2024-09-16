@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -24,22 +23,30 @@ import (
 const (
 	VersionFile = "ver.ini"
 
-	GithubReleaseURL   = "https://github.com/%s/%s/%s/%s"
-	GithubVersionURL   = "https://raw.githubusercontent.com/%s/%s/main/" + VersionFile
+	GithubReleaseURL   = "https://github.com/yourusername/yourrepo/%s/%s"
+	GithubVersionURL   = "https://raw.githubusercontent.com/yourusername/yourrepo/main/" + VersionFile
 	ExitCodeNoUpdate   = 0
 	ExitCodeNewVersion = 1
+	ExitCodeCancel     = 2
 	ExitCodeError      = -1
 	RetryLimit         = 3
 	ChunkSize          = 1024 * 1024 // 1MB
 
 )
 
+var (
+	AppName string
+)
+
 type Updater struct {
-	Current        VersionInfo
-	Owner          string
-	Repo           string
+	CurrentVer     VersionInfo
+	NewVer         VersionInfo
 	ExecutableName string
 	debugMode      bool
+
+	progressChan chan float64
+	doneChan     chan bool
+	success      bool
 }
 
 type VersionInfo struct {
@@ -47,124 +54,117 @@ type VersionInfo struct {
 	Filename       string
 	MD5            string
 	FullPackageURL string
+	RawData        []byte
 }
 
-func NewUpdater(owner, repo string, debug bool) *Updater {
+var (
+	IsSilentMode = false
+)
+
+func NewUpdater(appName string, debug bool, silent bool) *Updater {
+
+	IsSilentMode = silent
+	AppName = appName
 
 	exepath, _ := os.Executable()
 	execName := filepath.Base(exepath)
 
 	u := &Updater{
-		Current:        VersionInfo{},
-		Owner:          owner,
-		Repo:           repo,
+		CurrentVer:     VersionInfo{},
 		ExecutableName: execName,
 		debugMode:      debug,
+		progressChan:   make(chan float64),
+		doneChan:       make(chan bool),
+		success:        false,
 	}
 	// 设置VersionFile为当前目录下VersionFile的绝对路径
 	var VersionFilePath string
-	execDir, err := filepath.Abs(filepath.Dir(exepath))
+	var err error
+	var execDir string
+	execDir, err = filepath.Abs(filepath.Dir(exepath))
 	if err != nil {
-		log.Printf("获取可执行文件目录失败: %v\n", err)
 		VersionFilePath = VersionFile
 	} else {
 		VersionFilePath = filepath.Join(execDir, VersionFile)
 	}
 
-	vi, err := ReadVersionFile(VersionFilePath)
+	u.CurrentVer, err = ReadVersionFile(VersionFilePath)
 	if err != nil {
-		log.Printf("读取版本文件失败: %v\n", err)
-	} else {
-		u.Current = vi
-		log.Printf("当前版本: %s\n", vi.Version)
+		u.CurrentVer.Version = "0.0.0"
 	}
+
+	ShowMainWindow()
 
 	return u
 }
 
-func (u *Updater) Update() int {
+func (u *Updater) syncUI() {
+	go func() {
+		for progress := range u.progressChan {
+			SetUpdateProgress(progress)
+		}
+	}()
+}
 
-	vi, content, err := u.checkLatestVersion()
+func (u *Updater) bgTask() {
+	err := u.downloadAndUpdate()
+	u.doneChan <- (err == nil)
 	if err != nil {
-		log.Printf("检查更新时发生错误: %v", err)
+		ShowUpdateErrorDialog(err.Error())
+	}
+	close(u.progressChan)
+}
+
+func (u *Updater) Update() int {
+	AppendLogText(fmt.Sprintf("当前版本: %s", u.CurrentVer.Version))
+	AppendLogText("检查最新版本...")
+
+	var err error
+
+	u.NewVer, err = u.checkLatestVersion()
+	if err != nil {
+		AppendLogText(fmt.Sprintf("检查更新时发生错误: %v", err))
 		return ExitCodeError
 	}
 
-	if vi.Version == u.Current.Version {
-		log.Printf("没有新版本")
+	if u.NewVer.Version == u.CurrentVer.Version {
+		AppendLogText("没有新版本")
+		SetUpdateComplete()
 		return ExitCodeNoUpdate
 	}
 
-	progressChan := make(chan float64)
-	doneChan := make(chan bool)
-	success := false
-
-	// 更新进度条
-	cb1 := func() {
-		go func() {
-			for progress := range progressChan {
-				SetUpdateProgress(progress)
-			}
-		}()
-	}
-
-	// 更新完成
-	cb2 := func() {
-		go func() {
-			success = <-doneChan
-			if !success {
-				ShowUpdateErrorDialog(err.Error())
-				os.Exit(ExitCodeError)
-			}
-
-			// 关闭更新进度窗口
+	if !IsSilentMode {
+		ShowMainWindow()
+		if !ShowUpdateConfirmDialog(fmt.Sprintf("发现新版本: %s,是否更新?", u.NewVer.Version)) {
+			AppendLogText("更新被用户取消")
 			CloseWindow()
-
-		}()
+			return ExitCodeNoUpdate
+		}
 	}
 
-	// 在后台执行下载和更新
-	cb3 := func() {
-		go func() {
-			err = u.downloadAndUpdate(vi, content, progressChan)
-			if err != nil {
-				ShowUpdateErrorDialog(err.Error())
-				os.Exit(ExitCodeError)
-			} else {
-				close(progressChan)
-				doneChan <- (err == nil)
+	u.syncUI()
+	u.bgTask()
 
-			}
+	u.success = <-u.doneChan
+	AppendLogText("更新完成")
 
-		}()
-	}
-
-	message := fmt.Sprintf("发现新版本: %s\n当前版本: %s\n是否更新?", vi.Version, u.Current.Version)
-	if ShowUpdateConfirmDialog(message) {
-
-		// 显示更新窗口
-		ShowWindow(progressChan, cb1, cb2, cb3)
-
+	if u.success {
+		if !IsSilentMode {
+			SetUpdateComplete()
+		}
+		return ExitCodeNewVersion
 	} else {
-		return ExitCodeNoUpdate
-	}
-
-	if !success {
-		if err != nil {
+		if !IsSilentMode {
 			ShowUpdateErrorDialog(err.Error())
 		}
 		return ExitCodeError
 	}
 
-	return ExitCodeNewVersion
-
 }
 
-func (u *Updater) checkLatestVersion() (VersionInfo, []byte, error) {
-	log.Printf("检查最新版本...")
+func (u *Updater) checkLatestVersion() (VersionInfo, error) {
 
 	var vi VersionInfo
-	var content []byte
 	var err error
 
 	for i := 0; i < 3; i++ {
@@ -172,7 +172,7 @@ func (u *Updater) checkLatestVersion() (VersionInfo, []byte, error) {
 
 		var resp *http.Response
 
-		url := fmt.Sprintf(GithubVersionURL, u.Owner, u.Repo)
+		url := GithubVersionURL
 		resp, err = client.Get(url)
 		if err != nil {
 			time.Sleep(time.Second * 2)
@@ -180,15 +180,15 @@ func (u *Updater) checkLatestVersion() (VersionInfo, []byte, error) {
 		}
 		defer resp.Body.Close()
 
-		content, err = io.ReadAll(resp.Body)
+		vi.RawData, err = io.ReadAll(resp.Body)
 		if err != nil {
 			time.Sleep(time.Second * 2)
 			continue
 		}
 
-		cfg, err := ini.Load(content)
+		cfg, err := ini.Load(vi.RawData)
 		if err != nil {
-			return vi, content, fmt.Errorf("无法解析版本信息: %v", err)
+			return vi, fmt.Errorf("无法解析版本信息: %v", err)
 		}
 
 		vi.Version = cfg.Section("").Key("version").String()
@@ -197,40 +197,37 @@ func (u *Updater) checkLatestVersion() (VersionInfo, []byte, error) {
 		vi.FullPackageURL = cfg.Section("").Key("fullpackage").String()
 
 		if vi.Version == "" || vi.Filename == "" || vi.MD5 == "" || vi.FullPackageURL == "" {
-			return vi, content, fmt.Errorf("无效的版本文件格式")
+			return vi, fmt.Errorf("无效的版本文件格式")
 		}
 
-		return vi, content, nil
+		return vi, nil
 	}
 
-	return vi, content, fmt.Errorf("检查更新失败 %v", err)
+	return vi, fmt.Errorf("检查更新失败 %v", err)
 }
 
-func (u *Updater) downloadAndUpdate(vi VersionInfo, versionFileContent []byte, progressChan chan<- float64) error {
+func (u *Updater) downloadAndUpdate() error {
 	// 构建下载 URL
-	url := fmt.Sprintf(GithubReleaseURL, u.Owner, u.Repo, vi.Version, vi.Filename)
+	url := fmt.Sprintf(GithubReleaseURL, u.NewVer.Version, u.NewVer.Filename)
 
 	// 在当前目录下创建 tmp 目录
 	tempDir := "tmp"
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return fmt.Errorf("创建临时目录失败: %v", err)
 	}
-	tempFilePath := filepath.Join(tempDir, vi.Filename)
+	tempFilePath := filepath.Join(tempDir, u.NewVer.Filename)
 
 	// 下载文件
-	err := u.downloadWithResume(url, tempFilePath, progressChan)
+	err := u.downloadWithResume(url, tempFilePath)
 	if err != nil {
 		return fmt.Errorf("下载更新文件失败: %v", err)
 	}
 
 	// 验证 MD5
 	downloadedMD5, err := calculateMD5(tempFilePath)
-	if err != nil {
-		return fmt.Errorf("计算下载文件 MD5 失败: %v", err)
-	}
-	if downloadedMD5 != vi.MD5 {
+	if downloadedMD5 != u.NewVer.MD5 {
 		os.Remove(tempFilePath)
-		return fmt.Errorf("MD5 校验失败")
+		return fmt.Errorf("文件校验失败: %v", err)
 	}
 
 	err = u.extractAndReplace(tempFilePath)
@@ -238,9 +235,9 @@ func (u *Updater) downloadAndUpdate(vi VersionInfo, versionFileContent []byte, p
 		return fmt.Errorf("更新失败: %v", err)
 	}
 
-	progressChan <- 1.0 // 100% 进度
+	u.progressChan <- 1.0 // 100% 进度
 
-	err = ioutil.WriteFile(VersionFile, versionFileContent, 0644)
+	err = ioutil.WriteFile(VersionFile, u.NewVer.RawData, 0644)
 
 	if err != nil {
 		return fmt.Errorf("更新版本文件失败: %v", err)
@@ -249,7 +246,7 @@ func (u *Updater) downloadAndUpdate(vi VersionInfo, versionFileContent []byte, p
 	return nil
 }
 
-func (u *Updater) downloadWithResume(url string, filePath string, progressChan chan<- float64) error {
+func (u *Updater) downloadWithResume(url string, filePath string) error {
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
@@ -296,7 +293,7 @@ func (u *Updater) downloadWithResume(url string, filePath string, progressChan c
 		}
 
 		if totalSize == downloadedSize {
-			progressChan <- 0.9
+			u.progressChan <- 0.9
 			return nil
 		}
 
@@ -334,7 +331,7 @@ func (u *Updater) downloadWithResume(url string, filePath string, progressChan c
 			} else if progress < 0 {
 				progress = 0
 			}
-			progressChan <- progress
+			u.progressChan <- progress
 		}
 
 		if err != nil {
@@ -548,6 +545,7 @@ func calculateMD5(filePath string) (string, error) {
 	defer file.Close()
 
 	hash := md5.New()
+
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err
 	}

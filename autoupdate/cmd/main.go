@@ -1,25 +1,43 @@
 package main
 
 import (
-	"autoupdate/autoupdate/internal/updater"
+	. "autoupdate/autoupdate/internal/updater"
 	"flag"
-	"fmt"
-	"log"
 	"os"
+	"runtime"
 )
+
+var (
+	appName string
+	debug   bool
+	silent  bool
+)
+
+func init() {
+	flag.BoolVar(&debug, "debug", false, "调试模式")
+	flag.BoolVar(&silent, "silent", false, "静默模式")
+	flag.StringVar(&appName, "app", "", "应用名称")
+	flag.Parse()
+
+	if appName == "" {
+		appName = "Updater"
+	}
+}
 
 func main() {
 
-	log.SetOutput(os.Stdout)
-	log.Println("Auto Update Tool 启动")
+	runtime.LockOSThread()
 
-	debug := flag.Bool("debug", false, "启用调试模式")
-	flag.Parse()
+	worker := NewUpdater(appName, debug, silent)
 
-	if *debug {
-		fmt.Println("调试模式已启用")
-	}
+	var result int
 
-	updater := updater.NewUpdater("yourusername", "yourrepo", *debug)
-	os.Exit(updater.Update())
+	go func(result *int) {
+		*result = worker.Update()
+	}(&result)
+
+	AppLoop()
+
+	os.Exit(result)
+
 }

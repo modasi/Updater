@@ -3,13 +3,12 @@
 	"tasks": [
 		{
 			"type": "go",
-			"label": "go: build windows package",
+			"label": "build windows package",
 			"command": "build",
 			"args": [
-				"-ldflags",
-				"-s -w -H windowsgui",
+				"-ldflags=-s -w -H windowsgui",
 				"-o",
-				"${workspaceFolder}/bin/update.exe",
+				"${workspaceFolder}/bin/update.unpack.exe",
 				"${workspaceFolder}/autoupdate/cmd/main.go"
 			],
 			"problemMatcher": [
@@ -17,9 +16,31 @@
 			],
 			"group": {
 				"kind": "build",
+				"isDefault": false
+			},
+			"detail": "go build ${fileDirname}"
+		}
+		,
+		{
+			"dependsOn": [
+                "build windows package"
+            ],
+			"type": "shell",
+			"label": "build windows with upx",
+			"command": "upx",
+			"args": [
+				"--best",
+				"--lzma",
+				"-f",
+				"-o",
+				"${workspaceFolder}/bin/update.exe",
+				"${workspaceFolder}/bin/update.unpack.exe"
+			],
+			"group": {
+				"kind": "build",
 				"isDefault": true
 			},
-			"detail": "cd d:\\works\\update; go build ${fileDirname}"
+			"detail": "upx ${fileDirname}"
 		}
 	]
 }

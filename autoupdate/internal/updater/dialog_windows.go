@@ -7,346 +7,195 @@ import (
 	"fmt"
 	"syscall"
 	"unsafe"
+
+	"github.com/JamesHovious/w32"
 )
 
 var (
-	kernel32 = syscall.NewLazyDLL("kernel32.dll")
-	user32   = syscall.NewLazyDLL("user32.dll")
-	ole32    = syscall.NewLazyDLL("ole32.dll")
-	gdi32    = syscall.NewLazyDLL("gdi32.dll")
-
-	procCoInitializeEx  = ole32.NewProc("CoInitializeEx")
-	procCreateWindowExW = user32.NewProc("CreateWindowExW")
-	procShowWindow      = user32.NewProc("ShowWindow")
-	procDestroyWindow   = user32.NewProc("DestroyWindow")
-	procSendMessageW    = user32.NewProc("SendMessageW")
-	procMessageBoxW     = user32.NewProc("MessageBoxW")
-	procPostQuitMessage = user32.NewProc("PostQuitMessage")
-	procGetLastError    = kernel32.NewProc("GetLastError")
-
-	isUpdateCancelled     bool
-	currentProgressWindow *ProgressWindow
-
-	procRegisterClassExW = user32.NewProc("RegisterClassExW")
-	procDefWindowProcW   = user32.NewProc("DefWindowProcW")
-	procGetMessageW      = user32.NewProc("GetMessageW")
-	procTranslateMessage = user32.NewProc("TranslateMessage")
-	procDispatchMessageW = user32.NewProc("DispatchMessageW")
-	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
-
-	comctl32                 = syscall.NewLazyDLL("comctl32.dll")
-	procInitCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
-	procSetClassLongPtrW     = user32.NewProc("SetClassLongPtrW")
-	procGetSysColorBrush     = user32.NewProc("GetSysColorBrush")
-	procCreateSolidBrush     = gdi32.NewProc("CreateSolidBrush")
-	procGetStockObject       = gdi32.NewProc("GetStockObject")
-	procSetBkColor           = gdi32.NewProc("SetBkColor")
+	isUpdateCancelled bool
+	MainWindow        *ProgressWindow
+	cancelButton      w32.HWND
 )
-
-type INITCOMMONCONTROLSEX struct {
-	dwSize uint32
-	dwICC  uint32
-}
-
-type POINT struct {
-	X, Y int32
-}
-
-type MSG struct {
-	Hwnd    syscall.Handle
-	Message uint32
-	WParam  uintptr
-	LParam  uintptr
-	Time    uint32
-	Pt      POINT
-}
 
 const (
-	WS_OVERLAPPEDWINDOW  = 0x00CF0000
-	WS_CHILD             = 0x40000000
-	WS_VISIBLE           = 0x10000000
-	WS_OVERLAPPED        = 0x00000000
-	WS_CAPTION           = 0x00C00000
-	WS_SYSMENU           = 0x00080000
-	SW_SHOW              = 5
-	SW_HIDE              = 0
-	SM_CXSCREEN          = 0
-	SM_CYSCREEN          = 1
-	PBM_SETPOS           = 0x0402
-	MB_ICONERROR         = 0x00000010
-	MB_YESNO             = 0x00000004
-	MB_ICONQUESTION      = 0x00000020
-	IDYES                = 6
-	COINIT_MULTITHREADED = 0x0
-
-	WM_CLOSE       = 0x0010
-	WM_QUIT        = 0x0012
-	WM_DESTROY     = 0x0002
-	WM_SETFONT     = 0x0030
-	WM_CTLCOLORBTN = 0x0013
-
-	WM_COMMAND = 0x0111
-	BN_CLICKED = 0
-	IDCANCEL   = 2
-
-	ICC_STANDARD_CLASSES = 0x00004000
-	COLOR_WINDOW         = 5
-	COLOR_WHITE          = 0xFFFFFF
-	COLOR_BTNFACE        = 15
-	GWL_STYLE            = -16
-	GWL_EXSTYLE          = -20
-	WS_EX_COMPOSITED     = 0x02000000
-	BS_PUSHBUTTON        = 0x00000000
-	BS_DEFPUSHBUTTON     = 0x00000001
-	BS_FLAT              = 0x00000800
-	DEFAULT_GUI_FONT     = 17
+	WindowWidth  = 480
+	WindowHeight = 320
 )
-
-var (
-	GCLP_HBRBACKGROUND = -10
-)
-
-func init() {
-	coInitializeEx(nil, COINIT_MULTITHREADED)
-	// 初始化 Common Controls
-	var icc INITCOMMONCONTROLSEX
-	icc.dwSize = uint32(unsafe.Sizeof(icc))
-	icc.dwICC = ICC_STANDARD_CLASSES
-	procInitCommonControlsEx.Call(uintptr(unsafe.Pointer(&icc)))
-}
 
 type ProgressWindow struct {
-	hwnd         syscall.Handle
-	progressBar  syscall.Handle
-	cancelButton syscall.Handle
+	hwnd        w32.HWND
+	progressBar w32.HWND
+	logTextBox  w32.HWND
 }
 
-type WNDCLASSEXW struct {
-	CbSize        uint32
-	Style         uint32
-	LpfnWndProc   uintptr
-	CbClsExtra    int32
-	CbWndExtra    int32
-	HInstance     syscall.Handle
-	HIcon         syscall.Handle
-	HCursor       syscall.Handle
-	HbrBackground syscall.Handle
-	LpszMenuName  *uint16
-	LpszClassName *uint16
-	HIconSm       syscall.Handle
+func init() {
+
+	w32.CoInitialize()
+
+	var icc w32.INITCOMMONCONTROLSEX
+	icc.DwSize = uint32(unsafe.Sizeof(icc))
+	icc.DwICC = w32.ICC_PROGRESS_CLASS | w32.ICC_STANDARD_CLASSES
+	w32.InitCommonControlsEx(&icc)
 }
 
-func NewProgressWindow() (*ProgressWindow, error) {
+func NewMainWindow() (*ProgressWindow, error) {
 	className := syscall.StringToUTF16Ptr("ProgressWindowClass")
-	windowName := syscall.StringToUTF16Ptr("更新进度")
-	// 获取屏幕尺寸
-	screenWidth, _, _ := procGetSystemMetrics.Call(uintptr(SM_CXSCREEN))
-	screenHeight, _, _ := procGetSystemMetrics.Call(uintptr(SM_CYSCREEN))
+	windowName := syscall.StringToUTF16Ptr(AppName)
 
-	// 设置窗口尺寸
-	windowWidth := uintptr(480)
-	windowHeight := uintptr(240)
+	screenWidth := w32.GetSystemMetrics(w32.SM_CXSCREEN)
+	screenHeight := w32.GetSystemMetrics(w32.SM_CYSCREEN)
 
-	// 计算窗口位置
-	x := (screenWidth - windowWidth) / 2
-	y := (screenHeight - windowHeight) / 2
-
-	// 注册窗口类
-	wcx := WNDCLASSEXW{
-		CbSize:        uint32(unsafe.Sizeof(WNDCLASSEXW{})),
-		LpfnWndProc:   syscall.NewCallback(defWindowProc),
-		LpszClassName: className,
+	var ws uint
+	if IsSilentMode {
+		ws = w32.WS_CHILD | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
+	} else {
+		ws = w32.WS_CHILD | w32.WS_VISIBLE | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
 	}
 
-	atom, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wcx)))
+	x := (screenWidth - WindowWidth) / 2
+	y := (screenHeight - WindowHeight) / 2
 
-	if atom == 0 {
-		return nil, fmt.Errorf("RegisterClassEx failed: %v", err)
+	wcx := w32.WNDCLASSEX{
+		Style:     w32.CS_HREDRAW | w32.CS_VREDRAW,
+		WndProc:   syscall.NewCallback(defWindowProc),
+		Instance:  w32.GetModuleHandle(""),
+		ClassName: className,
+	}
+	wcx.Size = uint32(unsafe.Sizeof(wcx))
+
+	if atom := w32.RegisterClassEx(&wcx); atom == 0 {
+		return nil, fmt.Errorf("RegisterClassEx failed: %v", w32.GetLastError())
 	}
 
-	hwnd, _, _ := procCreateWindowExW.Call(
-		WS_EX_COMPOSITED,
-		uintptr(unsafe.Pointer(className)),
-		uintptr(unsafe.Pointer(windowName)),
-		WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,
-		x, y, 480, 240,
-		0, 0, 0, 0,
-	)
-
-	// 设置窗口背景色
-	hbrWhite, _, _ := procCreateSolidBrush.Call(uintptr(COLOR_WHITE)) // 创建白色画刷
-	procSetClassLongPtrW.Call(
-		uintptr(hwnd),
-		uintptr(GCLP_HBRBACKGROUND),
-		hbrWhite,
-	)
-
-	progressBar, _, _ := procCreateWindowExW.Call(
+	hwnd := w32.CreateWindowEx(
 		0,
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("msctls_progress32"))),
-		0,
-		WS_CHILD|WS_VISIBLE,
-		10, 20, 440, 24,
-		hwnd, 0, 0, 0,
-	)
+		className,
+		windowName,
+		w32.WS_OVERLAPPED|w32.WS_CAPTION|w32.WS_SYSMENU,
+		int(x), int(y), WindowWidth, WindowHeight,
+		0, 0, wcx.Instance, nil)
 
-	// 创建取消按钮
-	cancelButton, _, _ := procCreateWindowExW.Call(
+	if hwnd == 0 {
+		return nil, fmt.Errorf("CreateWindowEx failed: %v", w32.GetLastError())
+	}
+
+	progressBar := w32.CreateWindowEx(
 		0,
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("BUTTON"))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("取消"))),
-		WS_CHILD|WS_VISIBLE|BS_DEFPUSHBUTTON,
-		345, 150, 100, 25, // 调整位置和大小
-		hwnd,
-		IDCANCEL, // 按钮 ID
-		0, 0,
-	)
+		syscall.StringToUTF16Ptr("msctls_progress32"),
+		nil,
+		w32.WS_CHILD|w32.WS_VISIBLE|w32.PBS_SMOOTH,
+		12, 16, 440, 24,
+		hwnd, 0, wcx.Instance, nil)
+
+	logTextBox := w32.CreateWindowEx(
+		w32.WS_EX_CLIENTEDGE,
+		syscall.StringToUTF16Ptr("EDIT"),
+		nil,
+		ws|w32.ES_READONLY|w32.ES_MULTILINE|w32.ES_AUTOVSCROLL|w32.WS_VSCROLL,
+		12, 50, 440, 180,
+		hwnd, 0, wcx.Instance, nil)
+
+	w32.SendMessage(logTextBox, w32.EM_SETWORDBREAKPROC, 0, 0)
+
+	cancelButton = w32.CreateWindowEx(
+		0,
+		syscall.StringToUTF16Ptr("BUTTON"),
+		syscall.StringToUTF16Ptr("取消"),
+		w32.WS_CHILD|w32.WS_VISIBLE|w32.BS_DEFPUSHBUTTON,
+		352, 240, 100, 25,
+		hwnd, w32.HMENU(w32.IDCANCEL), wcx.Instance, nil)
 
 	return &ProgressWindow{
-		hwnd:         syscall.Handle(hwnd),
-		progressBar:  syscall.Handle(progressBar),
-		cancelButton: syscall.Handle(cancelButton),
+		hwnd:        hwnd,
+		progressBar: progressBar,
+		logTextBox:  logTextBox,
 	}, nil
 }
 
-func LOWORD(w uintptr) uint16 {
-	return uint16(w & 0xFFFF)
-}
-
-func HIWORD(w uintptr) uint16 {
-	return uint16((w >> 16) & 0xFFFF)
-}
-
-func defWindowProc(hwnd syscall.Handle, msg uint32, wparam, lparam uintptr) uintptr {
+func defWindowProc(hwnd w32.HWND, msg uint32, wparam, lparam uintptr) uintptr {
 	switch msg {
-	case WM_COMMAND:
-		if LOWORD(wparam) == IDCANCEL && HIWORD(wparam) == BN_CLICKED {
-			// 用户点击了取消按钮
-			SetUpdateCancelled(true)
-			procPostQuitMessage.Call(0)
+	case w32.WM_COMMAND:
+		if w32.LOWORD(uint32(wparam)) == w32.IDCANCEL && w32.HIWORD(uint32(wparam)) == w32.BN_CLICKED {
+			isUpdateCancelled = true
+			CloseWindow()
 			return 0
 		}
-	case WM_CLOSE:
-		procDestroyWindow.Call(uintptr(hwnd))
+	case w32.WM_CLOSE:
+		w32.DestroyWindow(hwnd)
 		return 0
-	case WM_DESTROY:
-		procPostQuitMessage.Call(0)
+	case w32.WM_DESTROY:
+		w32.PostQuitMessage(0)
 		return 0
 	}
 
-	ret, _, _ := procDefWindowProcW.Call(
-		uintptr(hwnd),
-		uintptr(msg),
-		wparam,
-		lparam,
-	)
+	return w32.DefWindowProc(hwnd, msg, wparam, lparam)
+}
 
-	return ret
+func AppLoop() {
+
+	var msg w32.MSG
+	for {
+		if w32.GetMessage(&msg, 0, 0, 0) == 0 {
+			break
+		}
+		w32.TranslateMessage(&msg)
+		w32.DispatchMessage(&msg)
+	}
 
 }
 
-func (pw *ProgressWindow) SetProgress(progress float64) {
-	procSendMessageW.Call(
-		uintptr(pw.progressBar),
-		PBM_SETPOS,
-		uintptr(int(progress*100)),
-		0,
-	)
-}
-
-func (pw *ProgressWindow) Show() {
-	procShowWindow.Call(uintptr(pw.hwnd), SW_SHOW)
-}
-
-func (pw *ProgressWindow) Hide() {
-	procShowWindow.Call(uintptr(pw.hwnd), SW_HIDE)
-}
-
-func (pw *ProgressWindow) Close() {
-	procSendMessageW.Call(uintptr(pw.hwnd), WM_CLOSE, 0, 0)
-}
-
-func ShowWindow(progressChan <-chan float64, cb1 func(), cb2 func(), cb3 func()) {
-	if currentProgressWindow == nil {
+func ShowMainWindow() {
+	if MainWindow == nil {
 		var err error
-		currentProgressWindow, err = NewProgressWindow()
+		MainWindow, err = NewMainWindow()
 		if err != nil {
-			// 处理错误，可能需要记录日志
 			return
 		}
 	}
-	currentProgressWindow.Show()
-
-	cb1()
-	cb2()
-	cb3()
-
-	var msg MSG
-	for {
-
-		ret, _, _ := procGetMessageW.Call(
-			uintptr(unsafe.Pointer(&msg)),
-			0,
-			0,
-			0,
-		)
-
-		if ret == 0 {
-			break
-		}
-
-		procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
-		procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
-
-	}
+	w32.ShowWindow(MainWindow.hwnd, w32.SW_SHOW)
 }
 
 func SetUpdateProgress(progress float64) {
-	if currentProgressWindow != nil {
-		currentProgressWindow.SetProgress(progress)
+
+	if MainWindow != nil {
+		w32.SendMessage(MainWindow.progressBar, w32.PBM_SETPOS, uintptr(int(progress*100)), 0)
+	}
+}
+
+func AppendLogText(text string) {
+
+	if MainWindow != nil {
+		currentText := make([]uint16, w32.SendMessage(MainWindow.logTextBox, w32.WM_GETTEXTLENGTH, 0, 0)+1)
+		w32.SendMessage(MainWindow.logTextBox, w32.WM_GETTEXT, uintptr(len(currentText)), uintptr(unsafe.Pointer(&currentText[0])))
+		newText := syscall.UTF16ToString(currentText) + text + "\r\n"
+		w32.SendMessage(MainWindow.logTextBox, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(newText))))
+		// w32.SendMessage(MainWindow.logTextBox, w32.EM_SCROLLCARET, 0, 0)
 	}
 }
 
 func CloseWindow() {
-	if currentProgressWindow != nil {
-		currentProgressWindow.Close()
+	if MainWindow != nil {
+		w32.SendMessage(MainWindow.hwnd, w32.WM_CLOSE, 0, 0)
 	}
+}
+
+func SetUpdateComplete() {
+	w32.SendMessage(cancelButton, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("完成"))))
 }
 
 func ShowUpdateErrorDialog(message string) {
-	ShowMessageBox("更新错误", message, MB_ICONERROR)
+	AppendLogText("更新错误: " + message)
+	ShowMessageBox("更新错误", message, w32.MB_ICONERROR)
 }
 
 func ShowUpdateConfirmDialog(message string) bool {
-	return ShowMessageBox("更新确认", message, MB_YESNO|MB_ICONQUESTION) == IDYES
+	return ShowMessageBox("更新确认", message, w32.MB_YESNO|w32.MB_ICONQUESTION) == w32.IDYES
 }
 
-func ShowMessageBox(title, message string, uType uint32) int32 {
-	var hwnd uintptr
-	if currentProgressWindow != nil {
-		hwnd = uintptr(currentProgressWindow.hwnd)
-	}
-	ret, _, _ := procMessageBoxW.Call(
-		uintptr(hwnd),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(message))),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(title))),
-		uintptr(uType),
-	)
-	return int32(ret)
+func ShowMessageBox(title, message string, uType uint) int32 {
+	return int32(w32.MessageBox(MainWindow.hwnd, message, title, uType))
 }
 
 func IsUpdateCancelled() bool {
 	return isUpdateCancelled
-}
-
-func SetUpdateCancelled(cancelled bool) {
-	isUpdateCancelled = cancelled
-}
-
-func coInitializeEx(pvReserved unsafe.Pointer, dwCoInit uint32) error {
-	ret, _, _ := procCoInitializeEx.Call(uintptr(pvReserved), uintptr(dwCoInit))
-	if ret != 0 {
-		return syscall.GetLastError()
-	}
-	return nil
 }
