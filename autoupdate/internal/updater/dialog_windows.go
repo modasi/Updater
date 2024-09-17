@@ -37,9 +37,12 @@ func init() {
 	icc.DwICC = w32.ICC_PROGRESS_CLASS | w32.ICC_STANDARD_CLASSES
 	w32.InitCommonControlsEx(&icc)
 
+	w32.SetProcessDPIAware()
+
 }
 
 func NewMainWindow() (*ProgressWindow, error) {
+
 	className := syscall.StringToUTF16Ptr("ProgressWindowClass")
 	windowName := syscall.StringToUTF16Ptr(AppName)
 
@@ -61,7 +64,6 @@ func NewMainWindow() (*ProgressWindow, error) {
 		return nil, fmt.Errorf("RegisterClassEx failed: %v", w32.GetLastError())
 	}
 
-	w32.SetProcessDPIAware()
 	hwnd := w32.CreateWindowEx(
 		w32.WS_EX_CONTROLPARENT|w32.WS_EX_APPWINDOW,
 		className,
