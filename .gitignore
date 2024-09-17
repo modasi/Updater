@@ -8,6 +8,8 @@
 *.a
 *.o
 *.syso
+*.bak
+
 
 
 /tmp/

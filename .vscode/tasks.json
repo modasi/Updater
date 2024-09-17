@@ -9,21 +9,33 @@
 				"-ldflags=-s -w -H windowsgui",
 				"-o",
 				"${workspaceFolder}/bin/update.unpack.exe",
-				"${workspaceFolder}/autoupdate/cmd/main.go"
+				"${workspaceFolder}/cmd/main.go"
 			],
 			"problemMatcher": [
 				"$go"
 			],
 			"group": {
 				"kind": "build",
-				"isDefault": false
-			},
-			"detail": "go build ${fileDirname}"
+				},
+			"detail": "go build ${fileDirname}",
+
 		}
 		,
 		{
 			"dependsOn": [
                 "build windows package"
+            ],
+			"type": "shell",
+			"label": "patch winres",
+			"command": "python ${workspaceFolder}/resources/pach-winres.py ${workspaceFolder}/bin/update.unpack.exe",
+			"group": {
+				"kind": "build",
+				},
+			"detail": "patch winres ${fileDirname}",
+		},
+		{
+			"dependsOn": [
+                "patch winres"
             ],
 			"type": "shell",
 			"label": "build windows with upx",

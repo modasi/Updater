@@ -1,10 +1,11 @@
 package main
 
 import (
-	. "autoupdate/autoupdate/internal/updater"
 	"flag"
 	"os"
 	"runtime"
+
+	"autoupdate/internal/updater"
 )
 
 var (
@@ -28,7 +29,7 @@ func main() {
 
 	runtime.LockOSThread()
 
-	worker := NewUpdater(appName, debug, silent)
+	worker := updater.NewUpdater(appName, debug, silent)
 
 	var result int
 
@@ -36,7 +37,7 @@ func main() {
 		*result = worker.Update()
 	}(&result)
 
-	AppLoop()
+	updater.AppLoop()
 
 	os.Exit(result)
 

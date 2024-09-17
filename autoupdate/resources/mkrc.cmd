@@ -1,1 +1,0 @@
-rsrc -manifest app.manifest -ico icon.ico -o main.syso

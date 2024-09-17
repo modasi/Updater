@@ -11,12 +11,19 @@ This is an application with auto-update functionality.
 
 ## Usage
 
-(Add instructions on how to use your application here)
+./updater -h
+
+-app string
+        Application name
+  -debug
+        Debug mode
+  -silent
+        Silent mode
+
 
 ## Development
 
 clone & open with vscode
-
 
 ## Debug
 
@@ -26,12 +33,12 @@ clone & open with vscode
 ### Prerequisites
 
 - Go 1.16+
+- go-winres
 - upx
 
 ### Building
 
 see launch.json & tasks.json
-
 
 ## Contributing
 
@@ -40,7 +47,6 @@ Issues and pull requests are welcome.
 ## Error Handling
 
 The application includes a custom error handling for update processes.
-
 
 ## License
 
