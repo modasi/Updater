@@ -63,10 +63,10 @@ func NewMainWindow() (*ProgressWindow, error) {
 
 	w32.SetProcessDPIAware()
 	hwnd := w32.CreateWindowEx(
-		0,
+		w32.WS_EX_CONTROLPARENT|w32.WS_EX_APPWINDOW,
 		className,
 		windowName,
-		w32.WS_OVERLAPPEDWINDOW,
+		w32.WS_OVERLAPPEDWINDOW & ^(w32.WS_MAXIMIZEBOX|w32.WS_MINIMIZEBOX),
 		int(x), int(y), WindowWidth, WindowHeight,
 		0, 0, wcx.Instance, nil)
 
@@ -95,7 +95,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 	cancelButton = w32.CreateWindowEx(
 		0,
 		syscall.StringToUTF16Ptr("BUTTON"),
-		syscall.StringToUTF16Ptr("取消"),
+		syscall.StringToUTF16Ptr("Cancel"),
 		w32.WS_CHILD|w32.WS_VISIBLE|w32.BS_PUSHBUTTON,
 		352, 240, 100, 25,
 		hwnd, w32.HMENU(w32.IDCANCEL), wcx.Instance, nil)
@@ -198,16 +198,16 @@ func CloseWindow() {
 }
 
 func SetUpdateComplete() {
-	w32.SendMessage(cancelButton, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("完成"))))
+	w32.SendMessage(cancelButton, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("Done"))))
 }
 
 func ShowUpdateErrorDialog(message string) {
-	AppendLogText("更新错误: " + message)
-	ShowMessageBox("更新错误", message, w32.MB_ICONERROR)
+	AppendLogText("Update Error: " + message)
+	ShowMessageBox("Update Error", message, w32.MB_ICONERROR)
 }
 
 func ShowUpdateConfirmDialog(message string) bool {
-	return ShowMessageBox("更新确认", message, w32.MB_YESNO|w32.MB_ICONQUESTION) == w32.IDYES
+	return ShowMessageBox("Update Confirmation", message, w32.MB_YESNO|w32.MB_ICONQUESTION) == w32.IDYES
 }
 
 func ShowMessageBox(title, message string, uType uint) int32 {

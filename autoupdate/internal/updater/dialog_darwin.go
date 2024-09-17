@@ -38,7 +38,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 	progressBar := gocoa.NewProgressIndicator(12, 20, 440, 24)
 	logTextView := gocoa.NewTextView(12, 100, 440, 180)
 	cancelButton := gocoa.NewButton(300, 300, 100, 25)
-	cancelButton.SetTitle("取消")
+	cancelButton.SetTitle("Cancel")
 
 	wnd.AddProgressIndicator(progressBar)
 	wnd.AddTextView(logTextView)
@@ -88,12 +88,12 @@ func CloseWindow() {
 
 func SetUpdateComplete() {
 	if MainWindow != nil {
-		cancelButton.SetTitle("完成")
+		cancelButton.SetTitle("Done")
 	}
 }
 
 func ShowUpdateErrorDialog(message string) {
-	AppendLogText("更新错误: " + message)
+	AppendLogText("Update Error: " + message)
 	ShowMessageBox(AppName, message, 1)
 }
 

@@ -14,9 +14,9 @@ var (
 )
 
 func init() {
-	flag.BoolVar(&debug, "debug", false, "调试模式")
-	flag.BoolVar(&silent, "silent", false, "静默模式")
-	flag.StringVar(&appName, "app", "", "应用名称")
+	flag.BoolVar(&debug, "debug", false, "Debug mode")
+	flag.BoolVar(&silent, "silent", false, "Silent mode")
+	flag.StringVar(&appName, "app", "", "Application name")
 	flag.Parse()
 
 	if appName == "" {

@@ -75,12 +75,11 @@ func NewUpdater(appName string, debug bool, silent bool) *Updater {
 		CurrentVer:     VersionInfo{},
 		ExecutableName: execName,
 		debugMode:      debug,
-		// progressChan:   make(chan float64),
-		doneChan: make(chan bool),
-		success:  false,
-		Progress: 0,
+		doneChan:       make(chan bool),
+		success:        false,
+		Progress:       0,
 	}
-	// 设置VersionFile为当前目录下VersionFile的绝对路径
+
 	var VersionFilePath string
 	var err error
 	var execDir string
@@ -102,11 +101,6 @@ func NewUpdater(appName string, debug bool, silent bool) *Updater {
 }
 
 func (u *Updater) syncUI() {
-	// go func() {
-	// 	for progress := range u.progressChan {
-	// 		SetUpdateProgress(progress)
-	// 	}
-	// }()
 
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
