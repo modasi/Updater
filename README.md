@@ -15,13 +15,23 @@ This is an application with auto-update functionality.
 
 ## Development
 
+clone & open with vscode
+
+
+## Debug
+
+* run debug_server.py setup a mock server in 127.0.0.1:9808
+* run output target with -debug or -silent from command line
+
 ### Prerequisites
 
 - Go 1.16+
+- upx
 
 ### Building
 
-(Add build instructions)
+see launch.json & tasks.json
+
 
 ## Contributing
 
@@ -29,7 +39,7 @@ Issues and pull requests are welcome.
 
 ## Error Handling
 
-The application includes error handling for update processes. 
+The application includes a custom error handling for update processes.
 
 
 ## License
