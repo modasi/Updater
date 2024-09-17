@@ -41,10 +41,18 @@ func init() {
 
 }
 
+func TCHAR(s string) *uint16 {
+	utf16, err := syscall.UTF16PtrFromString(s)
+	if err != nil {
+		return nil
+	}
+	return utf16
+}
+
 func NewMainWindow() (*ProgressWindow, error) {
 
-	className := syscall.StringToUTF16Ptr("ProgressWindowClass")
-	windowName := syscall.StringToUTF16Ptr(AppName)
+	className := TCHAR("ProgressWindowClass")
+	windowName := TCHAR(AppName)
 
 	screenWidth := w32.GetSystemMetrics(w32.SM_CXSCREEN)
 	screenHeight := w32.GetSystemMetrics(w32.SM_CYSCREEN)
@@ -78,7 +86,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 
 	progressBar := w32.CreateWindowEx(
 		0,
-		syscall.StringToUTF16Ptr("msctls_progress32"),
+		TCHAR("msctls_progress32"),
 		nil,
 		w32.WS_CHILD|w32.WS_VISIBLE|w32.PBS_SMOOTH,
 		12, 16, 440, 24,
@@ -86,7 +94,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 
 	logTextBox := w32.CreateWindowEx(
 		w32.WS_EX_CLIENTEDGE,
-		syscall.StringToUTF16Ptr("EDIT"),
+		TCHAR("EDIT"),
 		nil,
 		w32.WS_CHILD|w32.WS_VISIBLE|w32.WS_VSCROLL|w32.ES_MULTILINE|w32.ES_AUTOVSCROLL|w32.ES_READONLY,
 		12, 50, 440, 180,
@@ -96,8 +104,8 @@ func NewMainWindow() (*ProgressWindow, error) {
 
 	cancelButton = w32.CreateWindowEx(
 		0,
-		syscall.StringToUTF16Ptr("BUTTON"),
-		syscall.StringToUTF16Ptr("Cancel"),
+		TCHAR("BUTTON"),
+		TCHAR("Cancel"),
 		w32.WS_CHILD|w32.WS_VISIBLE|w32.BS_PUSHBUTTON,
 		352, 240, 100, 25,
 		hwnd, w32.HMENU(w32.IDCANCEL), wcx.Instance, nil)
@@ -188,7 +196,7 @@ func AppendLogText(text string) {
 		currentText := make([]uint16, w32.SendMessage(MainWindow.logTextBox, w32.WM_GETTEXTLENGTH, 0, 0)+1)
 		w32.SendMessage(MainWindow.logTextBox, w32.WM_GETTEXT, uintptr(len(currentText)), uintptr(unsafe.Pointer(&currentText[0])))
 		newText := syscall.UTF16ToString(currentText) + text + "\r\n"
-		w32.SendMessage(MainWindow.logTextBox, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(newText))))
+		w32.SendMessage(MainWindow.logTextBox, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(TCHAR(newText))))
 		// w32.SendMessage(MainWindow.logTextBox, w32.EM_SCROLLCARET, 0, 0)
 	}
 }
@@ -200,7 +208,7 @@ func CloseWindow() {
 }
 
 func SetUpdateComplete() {
-	w32.SendMessage(cancelButton, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("Done"))))
+	w32.SendMessage(cancelButton, w32.WM_SETTEXT, 0, uintptr(unsafe.Pointer(TCHAR("Done"))))
 }
 
 func ShowUpdateErrorDialog(message string) {
