@@ -36,6 +36,7 @@ func init() {
 	icc.DwSize = uint32(unsafe.Sizeof(icc))
 	icc.DwICC = w32.ICC_PROGRESS_CLASS | w32.ICC_STANDARD_CLASSES
 	w32.InitCommonControlsEx(&icc)
+
 }
 
 func NewMainWindow() (*ProgressWindow, error) {
@@ -44,13 +45,6 @@ func NewMainWindow() (*ProgressWindow, error) {
 
 	screenWidth := w32.GetSystemMetrics(w32.SM_CXSCREEN)
 	screenHeight := w32.GetSystemMetrics(w32.SM_CYSCREEN)
-
-	// var ws uint
-	// if IsSilentMode {
-	// 	ws = w32.WS_CHILD | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
-	// } else {
-	// 	ws = w32.WS_CHILD | w32.WS_VISIBLE | w32.WS_VSCROLL | w32.ES_MULTILINE | w32.ES_AUTOVSCROLL
-	// }
 
 	x := (screenWidth - WindowWidth) / 2
 	y := (screenHeight - WindowHeight) / 2
@@ -67,6 +61,7 @@ func NewMainWindow() (*ProgressWindow, error) {
 		return nil, fmt.Errorf("RegisterClassEx failed: %v", w32.GetLastError())
 	}
 
+	w32.SetProcessDPIAware()
 	hwnd := w32.CreateWindowEx(
 		0,
 		className,
@@ -104,6 +99,29 @@ func NewMainWindow() (*ProgressWindow, error) {
 		w32.WS_CHILD|w32.WS_VISIBLE|w32.BS_PUSHBUTTON,
 		352, 240, 100, 25,
 		hwnd, w32.HMENU(w32.IDCANCEL), wcx.Instance, nil)
+
+	// 创建默认字体
+	defaultFont := w32.CreateFontIndirect(&w32.LOGFONT{
+		Height:         int32(-w32.MulDiv(9, w32.GetDeviceCaps(w32.GetDC(0), w32.LOGPIXELSY), 72)),
+		Width:          0,
+		Escapement:     0,
+		Orientation:    0,
+		Weight:         w32.FW_NORMAL,
+		Italic:         0,
+		Underline:      0,
+		StrikeOut:      0,
+		CharSet:        w32.ANSI_CHARSET,
+		OutPrecision:   w32.OUT_TT_PRECIS,
+		ClipPrecision:  w32.CLIP_DEFAULT_PRECIS,
+		Quality:        w32.CLEARTYPE_QUALITY,
+		PitchAndFamily: w32.DEFAULT_PITCH | w32.FF_DONTCARE,
+		FaceName:       [32]uint16{'S', 'e', 'g', 'o', 'e', ' ', 'U', 'I'},
+	})
+
+	w32.SendMessage(hwnd, w32.WM_SETFONT, uintptr(defaultFont), 1)
+	w32.SendMessage(progressBar, w32.WM_SETFONT, uintptr(defaultFont), 1)
+	w32.SendMessage(logTextBox, w32.WM_SETFONT, uintptr(defaultFont), 1)
+	w32.SendMessage(cancelButton, w32.WM_SETFONT, uintptr(defaultFont), 1)
 
 	return &ProgressWindow{
 		hwnd:        hwnd,

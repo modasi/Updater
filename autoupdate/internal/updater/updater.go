@@ -130,7 +130,7 @@ func (u *Updater) bgTask() {
 	if err != nil {
 		ShowUpdateErrorDialog(err.Error())
 	}
-	// close(u.progressChan)
+
 }
 
 func (u *Updater) Update() int {
