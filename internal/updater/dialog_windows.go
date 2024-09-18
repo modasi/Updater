@@ -60,11 +60,15 @@ func NewMainWindow() (*ProgressWindow, error) {
 	x := (screenWidth - WindowWidth) / 2
 	y := (screenHeight - WindowHeight) / 2
 
+	hInstance := w32.GetModuleHandle("")
+	hIcon := w32.LoadIcon(hInstance, w32.MakeIntResource(101))
+
 	wcx := w32.WNDCLASSEX{
 		Style:     w32.CS_HREDRAW | w32.CS_VREDRAW,
 		WndProc:   syscall.NewCallback(defWindowProc),
-		Instance:  w32.GetModuleHandle(""),
+		Instance:  hInstance,
 		ClassName: className,
+		Icon:      hIcon,
 	}
 	wcx.Size = uint32(unsafe.Sizeof(wcx))
 
